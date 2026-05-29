@@ -1,0 +1,53 @@
+name: nestjs-sequelize-audit-log-e2e
+
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: audit_app
+      MYSQL_USER: audit
+      MYSQL_PASSWORD: audit
+    ports:
+      - "3307:3306"
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -proot --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: Developer
+      MSSQL_SA_PASSWORD: Str0ngAudit!2026
+    ports:
+      - "1434:1433"
+
+  mssql-init:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    depends_on:
+      - mssql
+    environment:
+      MSSQL_SA_PASSWORD: Str0ngAudit!2026
+    entrypoint: /bin/bash
+    command:
+      - -lc
+      - |
+        set -e
+        SQLCMD=""
+        for candidate in /opt/mssql-tools18/bin/sqlcmd /opt/mssql-tools/bin/sqlcmd; do
+          if [ -x "$$candidate" ]; then SQLCMD="$$candidate"; break; fi
+        done
+        if [ -z "$$SQLCMD" ]; then
+          echo "sqlcmd not found; host ensure:archive-db script will create the database"
+          exit 0
+        fi
+        for i in {1..60}; do
+          if "$$SQLCMD" -S mssql -U sa -P "$$MSSQL_SA_PASSWORD" -C -Q "SELECT 1" >/dev/null 2>&1; then
+            break
+          fi
+          sleep 2
+        done
+        "$$SQLCMD" -S mssql -U sa -P "$$MSSQL_SA_PASSWORD" -C -Q "IF DB_ID(N'audit_archive') IS NULL CREATE DATABASE [audit_archive]"
