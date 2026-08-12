@@ -1,0 +1,16 @@
+# LF no repositório e no working tree, em qualquer SO. Sem isto, um checkout
+# no Windows reescreve a árvore inteira em CRLF e todo arquivo aparece como
+# modificado.
+* text=auto eol=lf
+
+# O tarball vendorizado da lib nunca pode sofrer conversão: qualquer byte
+# alterado quebra a integrity do package-lock.
+*.tgz binary
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.gz binary
+*.zip binary
