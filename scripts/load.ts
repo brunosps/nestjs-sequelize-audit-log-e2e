@@ -2,6 +2,7 @@ import axios from 'axios';
 
 import { appBaseUrl } from './config';
 import { addExpectedTicks } from './manifest';
+import { appendProtocols } from './protocols';
 
 function readNumberArg(name: string, fallback: number) {
   const prefix = `--${name}=`;
@@ -18,6 +19,8 @@ async function runOneTick(seq: number) {
   if (tick.status !== 201) {
     throw new Error(`unexpected /load/tick status ${tick.status}`);
   }
+
+  appendProtocols(tick.data.protocols);
 }
 
 async function main() {

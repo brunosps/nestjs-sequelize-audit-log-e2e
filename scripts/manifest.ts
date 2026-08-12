@@ -51,6 +51,33 @@ export function readManifest() {
   return JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as Manifest;
 }
 
+/**
+ * Soma logs avulsos (fora do tick padrão) às contagens esperadas.
+ */
+export function addExpectedLogs(
+  label: string,
+  byType: Record<string, number>,
+  childTables: Record<string, number>,
+) {
+  const manifest = readManifest();
+
+  for (const [type, count] of Object.entries(byType)) {
+    manifest.expected.byType[type] =
+      (manifest.expected.byType[type] ?? 0) + count;
+    manifest.expected.total += count;
+  }
+
+  for (const [table, count] of Object.entries(childTables)) {
+    manifest.expected.childTables[table] =
+      (manifest.expected.childTables[table] ?? 0) + count;
+  }
+
+  manifest.updatedAt = new Date().toISOString();
+  manifest.runs.push({ label, ticks: 0, at: manifest.updatedAt });
+  fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  return manifest;
+}
+
 export function addExpectedTicks(label: string, ticks: number) {
   const manifest = readManifest();
   manifest.ticks += ticks;

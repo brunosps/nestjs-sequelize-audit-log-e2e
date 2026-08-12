@@ -6,7 +6,7 @@ APP_PORT="${APP_PORT:-3100}"
 LOAD_RATE="${LOAD_RATE:-10}"
 LOAD_DURATION="${LOAD_DURATION:-600}"
 ARCHIVE_SETTLE_SECONDS="${ARCHIVE_SETTLE_SECONDS:-20}"
-PACKAGE_FILE="$ROOT_DIR/vendor/nestjs-sequelize-audit-log-1.3.0.tgz"
+PACKAGE_FILE="$ROOT_DIR/vendor/nestjs-sequelize-audit-log-1.4.0.tgz"
 
 cd "$ROOT_DIR"
 mkdir -p artifacts

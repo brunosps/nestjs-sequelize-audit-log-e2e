@@ -23,7 +23,7 @@ export class AppController {
 
   @Post('auth/login')
   async login(@Body() body: { userId?: string }) {
-    await this.auditLogService.registerLog('LOGIN' as any, {
+    const protocol = await this.auditLogService.registerLog('LOGIN', {
       system: 'e2e-auth',
       registerRequest: true,
       userId: body.userId ?? 'login-user',
@@ -35,6 +35,7 @@ export class AppController {
     return {
       ok: true,
       userId: body.userId ?? 'login-user',
+      protocol,
     };
   }
 
@@ -63,9 +64,36 @@ export class AppController {
     return item;
   }
 
+  /**
+   * Registra um evento e devolve o protocolo. Como EVENT grava de forma
+   * síncrona, o protocolo já deve existir no banco quando esta rota responde.
+   */
+  @Post('events')
+  async logEvent(
+    @Body()
+    body: {
+      type?: string;
+      description?: string;
+      details?: Record<string, any>;
+      buffered?: boolean;
+    },
+  ) {
+    const protocol = await this.auditLogService.logEvent(
+      {
+        type: body.type ?? 'MANUAL_EVENT',
+        description: body.description ?? 'manual event',
+        details: body.details ?? {},
+        eventStatus: 'SUCCESS',
+      },
+      body.buffered ? { sync: false } : undefined,
+    );
+
+    return { ok: true, protocol, buffered: Boolean(body.buffered) };
+  }
+
   @Post('error')
   async logExpectedError() {
-    await this.auditLogService.registerLog('ERROR' as any, {
+    await this.auditLogService.registerLog('ERROR', {
       message: JSON.stringify({ message: 'expected e2e error' }),
       errorType: 'E2EExpectedError',
       stackTrace: 'stack omitted in e2e harness',
@@ -79,6 +107,14 @@ export class AppController {
   @Post('load/tick')
   async loadTick(@Body() body: { seq?: number }) {
     const seq = body.seq ?? Date.now();
+    const protocols: Record<string, string[]> = {
+      ENTITY: [],
+      EVENT: [],
+      INTEGRATION: [],
+      REQUEST: [],
+      LOGIN: [],
+      ERROR: [],
+    };
 
     for (let i = 0; i < 2; i += 1) {
       const item = await this.itemModel.create({
@@ -87,60 +123,104 @@ export class AppController {
         status: 'ACTIVE',
       } as any);
 
-      await this.auditLogService.registerLog('ENTITY' as any, {
-        action: 'CREATE',
-        entity: 'items',
-        changedValues: item.toJSON(),
-        entityPk: { id: item.id },
-        entityKey: String(item.id),
-      });
+      protocols.ENTITY.push(
+        this.requireProtocol(
+          'ENTITY',
+          await this.auditLogService.registerLog('ENTITY', {
+            action: 'CREATE',
+            entity: 'items',
+            changedValues: item.toJSON(),
+            entityPk: { id: item.id },
+            entityKey: String(item.id),
+          }),
+        ),
+      );
     }
 
     for (let i = 0; i < 2; i += 1) {
-      await this.auditLogService.registerLog('EVENT' as any, {
-        type: 'LOAD_TICK',
-        description: `load event ${seq}-${i}`,
-        details: { seq, index: i },
-        eventStatus: 'SUCCESS',
-      });
+      protocols.EVENT.push(
+        this.requireProtocol(
+          'EVENT',
+          await this.auditLogService.registerLog('EVENT', {
+            type: 'LOAD_TICK',
+            description: `load event ${seq}-${i}`,
+            details: { seq, index: i },
+            eventStatus: 'SUCCESS',
+          }),
+        ),
+      );
     }
 
     for (let i = 0; i < 2; i += 1) {
-      await this.auditLogService.registerLog('INTEGRATION' as any, {
-        integrationName: 'load-runner',
-        method: 'POST',
-        requestPayload: JSON.stringify({ seq, index: i }),
-        responsePayload: JSON.stringify({ ok: true }),
-        status: '200',
-        duration: 1,
-      });
+      protocols.INTEGRATION.push(
+        this.requireProtocol(
+          'INTEGRATION',
+          await this.auditLogService.registerLog('INTEGRATION', {
+            integrationName: 'load-runner',
+            method: 'POST',
+            requestPayload: JSON.stringify({ seq, index: i }),
+            responsePayload: JSON.stringify({ ok: true }),
+            status: '200',
+            duration: 1,
+          }),
+        ),
+      );
     }
 
     for (let i = 0; i < 2; i += 1) {
-      await this.auditLogService.registerLog('REQUEST' as any, {
-        ...this.requestLog('POST', `/load/request-${i}`, 200, { seq, i }),
-        responseBody: JSON.stringify({ ok: true, seq, i }),
+      protocols.REQUEST.push(
+        this.requireProtocol(
+          'REQUEST',
+          await this.auditLogService.registerLog('REQUEST', {
+            ...this.requestLog('POST', `/load/request-${i}`, 200, { seq, i }),
+            responseBody: JSON.stringify({ ok: true, seq, i }),
+          }),
+        ),
+      );
+    }
+
+    protocols.LOGIN.push(
+      this.requireProtocol(
+        'LOGIN',
+        await this.auditLogService.registerLog('LOGIN', {
+          system: 'e2e-auth',
+          registerRequest: true,
+          userId: `login-${seq}`,
+          request: this.requestLog('POST', '/auth/login', 201, {
+            userId: `login-${seq}`,
+          }),
+        }),
+      ),
+    );
+
+    protocols.ERROR.push(
+      this.requireProtocol(
+        'ERROR',
+        await this.auditLogService.registerLog('ERROR', {
+          message: JSON.stringify({ message: 'expected e2e error' }),
+          errorType: 'E2EExpectedError',
+          stackTrace: 'stack omitted in e2e harness',
+          routePath: '/error',
+          routeMethod: 'POST',
+        }),
+      ),
+    );
+
+    return { ok: true, seq, protocols };
+  }
+
+  /**
+   * Todo registerLog deve devolver um protocolo; `null` significa que a
+   * gravação falhou e o teste precisa quebrar em vez de seguir silenciosamente.
+   */
+  private requireProtocol(logType: string, protocol: string | null) {
+    if (!protocol) {
+      throw new InternalServerErrorException({
+        message: `audit log ${logType} returned no protocol`,
       });
     }
 
-    await this.auditLogService.registerLog('LOGIN' as any, {
-      system: 'e2e-auth',
-      registerRequest: true,
-      userId: `login-${seq}`,
-      request: this.requestLog('POST', '/auth/login', 201, {
-        userId: `login-${seq}`,
-      }),
-    });
-
-    await this.auditLogService.registerLog('ERROR' as any, {
-      message: JSON.stringify({ message: 'expected e2e error' }),
-      errorType: 'E2EExpectedError',
-      stackTrace: 'stack omitted in e2e harness',
-      routePath: '/error',
-      routeMethod: 'POST',
-    });
-
-    return { ok: true, seq };
+    return protocol;
   }
 
   private requestLog(

@@ -7,6 +7,23 @@ Aplicacao NestJS de teste para validar a lib `nestjs-sequelize-audit-log` com:
 - Docker Compose para subir os bancos.
 - Carga com todos os tipos principais de log: `ENTITY`, `EVENT`, `INTEGRATION`, `REQUEST`, `LOGIN` e `ERROR`.
 - Verificacao de totais, tabelas filhas, duplicidade, orfaos e limpeza da origem apos archive.
+- Verificacao do protocolo devolvido por `registerLog()` / `logEvent()`.
+
+## Protocolo
+
+A partir da `1.4.0` a lib devolve o id do log (protocolo) em `registerLog()` e
+`logEvent()`. O harness valida isso em duas frentes:
+
+- **Sincronia**: o smoke chama `POST /events` e confere no MySQL, imediatamente
+  apos a resposta, que o protocolo ja existe em `audit_logs` e em
+  `audit_logs_event` — sem esperar o flush do buffer. `EVENT` grava de forma
+  sincrona por padrao justamente para isso.
+- **Resolucao**: todo protocolo devolvido durante a carga e gravado em
+  `artifacts/protocols.jsonl`; ao final, o `verify` confere que cada um resolve
+  para uma linha real em `audit_logs` no archive, com o mesmo `log_type` que o
+  chamador registrou.
+
+A aplicacao quebra o teste se qualquer `registerLog()` devolver `null`.
 
 ## Requisitos
 
@@ -49,6 +66,10 @@ Tambem foram validados:
 - Tabelas filhas sem orfaos.
 - `audit_logs_request` com `1803` registros, pois o login tambem registra request vinculado.
 
+Na validacao da `1.4.0` com `LOAD_DURATION=30`, os `311` logs gerados produziram
+`311` protocolos, todos resolvendo para a linha correta no archive
+(`missingCount: 0`, `mismatchedCount: 0`).
+
 ## Variaveis uteis
 
 ```bash
@@ -60,4 +81,4 @@ Com `KEEP_STACK=1`, os containers permanecem ativos ao final do teste para inspe
 
 ## Pacote testado
 
-Este repo usa o tarball versionado em `vendor/nestjs-sequelize-audit-log-1.3.0.tgz` para deixar a execucao reproduzivel sem depender de publicacao no npm.
+Este repo usa o tarball versionado em `vendor/nestjs-sequelize-audit-log-1.4.0.tgz` para deixar a execucao reproduzivel sem depender de publicacao no npm.

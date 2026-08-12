@@ -6,6 +6,7 @@ import { QueryTypes, Sequelize } from 'sequelize';
 import { auditTables } from './config';
 import { createMssqlSequelize, createMysqlSequelize } from './db';
 import { readManifest } from './manifest';
+import { readProtocols } from './protocols';
 
 type CountRow = { count: number | string };
 type TypeCountRow = { logType?: string; log_type?: string; count: number | string };
@@ -63,6 +64,44 @@ async function duplicateParentCount(sequelize: Sequelize) {
   );
 }
 
+/**
+ * Todo protocolo devolvido pela lib tem de resolver para uma linha real em
+ * audit_logs, com o mesmo log_type que o chamador registrou.
+ */
+async function protocolResolution(sequelize: Sequelize) {
+  const expectedTypeById = new Map(
+    readProtocols().map((record) => [record.protocol, record.logType]),
+  );
+  const ids = [...expectedTypeById.keys()];
+  const foundTypeById = new Map<string, string>();
+
+  for (let start = 0; start < ids.length; start += 500) {
+    const chunk = ids.slice(start, start + 500);
+    const rows = await sequelize.query<{ id: string; logType: string }>(
+      'SELECT id, log_type AS logType FROM audit_logs WHERE id IN (:ids)',
+      { type: QueryTypes.SELECT, replacements: { ids: chunk } },
+    );
+
+    for (const row of rows) {
+      foundTypeById.set(row.id, String(row.logType));
+    }
+  }
+
+  const missing = ids.filter((id) => !foundTypeById.has(id));
+  const mismatched = ids.filter(
+    (id) =>
+      foundTypeById.has(id) && foundTypeById.get(id) !== expectedTypeById.get(id),
+  );
+
+  return {
+    total: ids.length,
+    missingCount: missing.length,
+    mismatchedCount: mismatched.length,
+    missingSample: missing.slice(0, 20),
+    mismatchedSample: mismatched.slice(0, 20),
+  };
+}
+
 async function collectSnapshot(mysql: Sequelize, mssql: Sequelize) {
   const [sourceParentTotal, archiveParentTotal] = await Promise.all([
     tableCount(mysql, 'audit_logs'),
@@ -80,6 +119,7 @@ async function collectSnapshot(mysql: Sequelize, mssql: Sequelize) {
       childTables: await childCounts(mssql),
       orphanTables: await orphanCounts(mssql),
       duplicateParents: await duplicateParentCount(mssql),
+      protocols: await protocolResolution(mssql),
     },
   };
 }
@@ -129,6 +169,26 @@ function validate(snapshot: Awaited<ReturnType<typeof collectSnapshot>>) {
   if (snapshot.archive.duplicateParents !== 0) {
     failures.push(
       `archive audit_logs has ${snapshot.archive.duplicateParents} duplicate IDs`,
+    );
+  }
+
+  const protocols = snapshot.archive.protocols;
+
+  if (protocols.total !== manifest.expected.total) {
+    failures.push(
+      `collected protocols expected ${manifest.expected.total}, got ${protocols.total}`,
+    );
+  }
+
+  if (protocols.missingCount !== 0) {
+    failures.push(
+      `${protocols.missingCount} protocols do not resolve to an audit_logs row (e.g. ${protocols.missingSample.join(', ')})`,
+    );
+  }
+
+  if (protocols.mismatchedCount !== 0) {
+    failures.push(
+      `${protocols.mismatchedCount} protocols resolve to a different log_type (e.g. ${protocols.mismatchedSample.join(', ')})`,
     );
   }
 
